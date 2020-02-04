@@ -22,6 +22,7 @@ pub use sc_network::config::{ExtTransport, NetworkConfiguration, Roles};
 pub use sc_executor::WasmExecutionMethod;
 
 use std::{future::Future, path::{PathBuf, Path}, pin::Pin, net::SocketAddr, sync::Arc};
+use parking_lot::Mutex;
 pub use sc_transaction_pool::txpool::Options as TransactionPoolOptions;
 use sc_chain_spec::{ChainSpec, NoExtension};
 use sp_core::crypto::Protected;
@@ -60,7 +61,7 @@ pub struct Configuration<G, E = NoExtension> {
 	/// Node roles.
 	pub roles: Roles,
 	/// How to spawn background tasks. Mandatory, otherwise creating a `Service` will error.
-	pub task_executor: Option<Box<dyn Fn(Pin<Box<dyn Future<Output = ()> + Send>>) + Send>>,
+	pub task_executor: Option<Arc<Mutex<dyn Fn(Pin<Box<dyn Future<Output = ()> + Send>>) + Send>>>,
 	/// Extrinsic pool configuration.
 	pub transaction_pool: TransactionPoolOptions,
 	/// Network configuration.
