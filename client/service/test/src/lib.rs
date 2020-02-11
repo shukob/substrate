@@ -43,7 +43,7 @@ use sp_transaction_pool::TransactionPool;
 /// Maximum duration of single wait call.
 const MAX_WAIT_TIME: Duration = Duration::from_secs(60 * 3);
 
-struct TestNet<G, E, F, L, U> {
+pub struct TestNet<G, E, F, L, U> {
 	runtime: Runtime,
 	authority_nodes: Vec<(usize, SyncService<F>, U, Multiaddr)>,
 	full_nodes: Vec<(usize, SyncService<F>, U, Multiaddr)>,
@@ -217,7 +217,7 @@ impl<G, E, F, L, U> TestNet<G, E, F, L, U> where
 	L: AbstractService,
 	E: Clone,
 {
-	fn new(
+	pub fn new(
 		temp: &TempDir,
 		spec: ChainSpec<G, E>,
 		full: impl Iterator<Item = impl FnOnce(Configuration<G, E>) -> Result<(F, U), Error>>,
@@ -244,7 +244,19 @@ impl<G, E, F, L, U> TestNet<G, E, F, L, U> where
 		net
 	}
 
-	fn insert_nodes(
+	pub fn full_nodes(&self) -> &[(usize, SyncService<F>, U, Multiaddr)] {
+		&self.full_nodes
+	}
+
+	pub fn light_nodes(&self) -> &[(usize, SyncService<L>, Multiaddr)] {
+		&self.light_nodes
+	}
+
+	pub fn authority_nodes(&self) -> &[(usize, SyncService<F>, U, Multiaddr)] {
+		&self.authority_nodes
+	}
+
+	pub fn insert_nodes(
 		&mut self,
 		temp: &TempDir,
 		full: impl Iterator<Item = impl FnOnce(Configuration<G, E>) -> Result<(F, U), Error>>,
