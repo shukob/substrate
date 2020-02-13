@@ -72,6 +72,8 @@ use frame_support::{traits::{Get, ReservableCurrency, Currency}, weights::{
 use frame_system::{self as system, ensure_signed};
 use sp_runtime::{DispatchError, DispatchResult, traits::Dispatchable};
 
+pub mod benchmarking;
+
 type BalanceOf<T> = <<T as Trait>::Currency as Currency<<T as frame_system::Trait>::AccountId>>::Balance;
 
 /// Configuration trait.
@@ -105,7 +107,7 @@ pub trait Trait: frame_system::Trait {
 /// composite was created to be uniquely identified.
 #[derive(Copy, Clone, Eq, PartialEq, Encode, Decode, Default, RuntimeDebug)]
 pub struct Timepoint<BlockNumber> {
-	/// The hieght of the chain at the point in time.
+	/// The height of the chain at the point in time.
 	height: BlockNumber,
 	/// The index of the extrinsic at the point in time.
 	index: u32,
