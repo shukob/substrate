@@ -15,7 +15,7 @@ use sp_runtime::{
 	impl_opaque_keys, MultiSignature,
 };
 use sp_runtime::traits::{
-	NumberFor, BlakeTwo256, Block as BlockT, StaticLookup, Verify, ConvertInto, IdentifyAccount
+	BlakeTwo256, Block as BlockT, StaticLookup, Verify, ConvertInto, IdentifyAccount
 };
 use sp_api::impl_runtime_apis;
 use sp_consensus_aura::sr25519::AuthorityId as AuraId;
@@ -256,6 +256,12 @@ impl evm::Trait for Runtime {
 	type Currency = Balances;
 	type Event = Event;
 	type Precompiles = ();
+}
+
+
+/// Used for the module template in `./template.rs`
+impl template::Trait for Runtime {
+	type Event = Event;
 }
 
 construct_runtime!(
