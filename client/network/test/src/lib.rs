@@ -306,24 +306,24 @@ impl<D> Peer<D> {
 					amount: 1,
 					nonce,
 				};
-				builder.push(transfer.into_signed_tx()).unwrap();
+				builder.push_trusted(transfer.into_signed_tx()).expect("Failed to push transaction in block");
 				nonce = nonce + 1;
-				builder.build().unwrap().block
+				builder.build().expect("Failed to build block").block
 			})
 		} else {
 			self.generate_blocks_at(
 				at,
 				count,
 				BlockOrigin::File,
-				|builder| builder.build().unwrap().block,
+				|builder| builder.build().expect("Failed to build block").block,
 			)
 		}
 	}
 
 	pub fn push_authorities_change_block(&mut self, new_authorities: Vec<AuthorityId>) -> H256 {
 		self.generate_blocks(1, BlockOrigin::File, |mut builder| {
-			builder.push(Extrinsic::AuthoritiesChange(new_authorities.clone())).unwrap();
-			builder.build().unwrap().block
+			builder.push_trusted(Extrinsic::AuthoritiesChange(new_authorities.clone())).unwrap();
+			builder.build().expect("Failed to build block").block
 		})
 	}
 
