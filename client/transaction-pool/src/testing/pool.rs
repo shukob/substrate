@@ -268,6 +268,27 @@ fn should_not_retain_invalid_hashes_from_retracted() {
 }
 
 #[test]
+fn should_not_resubmit_pruned_transaction_back_to_ready() {
+	let xt = uxt(Alice, 209);
+
+	let (pool, _guard) = maintained_pool();
+
+	block_on(pool.submit_one(&BlockId::number(0), xt.clone())).expect("1. Imported");
+	assert_eq!(pool.status().ready, 1);
+
+	pool.api.push_block(1, vec![xt.clone()]);
+
+	let event = block_event(1);
+
+	block_on(pool.maintain(event));
+
+	// maintenance is in background
+	block_on(futures_timer::Delay::new(BACKGROUND_REVALIDATION_INTERVAL*2));
+
+	assert_eq!(pool.status().ready, 0);
+}
+
+#[test]
 fn should_push_watchers_during_maintaince() {
 	fn alice_uxt(nonce: u64) -> Extrinsic {
 		uxt(Alice, 209 + nonce)

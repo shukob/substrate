@@ -34,10 +34,15 @@ pub const BACKGROUND_REVALIDATION_INTERVAL: Duration = Duration::from_millis(5);
 
 const BACKGROUND_REVALIDATION_BATCH_SIZE: usize = 20;
 
-/// Payload from queue to worker.
-struct WorkerPayload<Api: ChainApi> {
-	at: NumberFor<Api>,
-	transactions: Vec<ExHash<Api>>,
+/// Background worker notification.
+enum WorkerNotify<Api: ChainApi> {
+	Add {
+		at: NumberFor<Api>,
+		transactions: Vec<ExHash<Api>>,
+	},
+	Remove {
+		transactions: Vec<ExHash<Api>>,
+	},
 }
 
 /// Async revalidation worker.
@@ -89,6 +94,7 @@ async fn batch_revalidate<Api: ChainApi>(
 				log::trace!(target: "txpool", "[{:?}]: Unknown during revalidation: {:?}", ext_hash, err);
 			},
 			Ok(Ok(validity)) => {
+				log::debug!(target: "txpool", "[{:?}]: Valid during revalidation, will be resubmitted.", ext_hash);
 				revalidated.insert(
 					ext_hash.clone(),
 					ValidatedTransaction::valid_at(
@@ -113,7 +119,10 @@ async fn batch_revalidate<Api: ChainApi>(
 	}
 
 	pool.validated_pool().remove_invalid(&invalid_hashes);
-	pool.resubmit(revalidated);
+
+	if revalidated.len() > 0 {
+		pool.resubmit(revalidated);
+	}
 }
 
 impl<Api: ChainApi> RevalidationWorker<Api> {
@@ -149,6 +158,7 @@ impl<Api: ChainApi> RevalidationWorker<Api> {
 				} else {
 					for xt in &to_queue {
 						extrinsics.remove(xt);
+						self.members.remove(xt);
 					}
 				}
 				left -= to_queue.len();
@@ -163,14 +173,18 @@ impl<Api: ChainApi> RevalidationWorker<Api> {
 		queued_exts
 	}
 
-	fn push(&mut self, worker_payload: WorkerPayload<Api>) {
-		// we don't add something that already scheduled for revalidation
-		let transactions = worker_payload.transactions;
-		let block_number = worker_payload.at;
-
+	fn push(&mut self, block_number: NumberFor<Api>, transactions: Vec<ExHash<Api>>) {
 		for ext_hash in transactions {
 			// we don't add something that already scheduled for revalidation
-			if self.members.contains_key(&ext_hash) { continue; }
+			if self.members.contains_key(&ext_hash) {
+				log::debug!(
+					target: "txpool",
+					"[{:?}] Skipped adding for revalidation: Already there.",
+					ext_hash,
+				);
+
+				continue;
+			}
 
 			self.block_ordered.entry(block_number)
 				.and_modify(|value| { value.insert(ext_hash.clone()); })
@@ -183,12 +197,26 @@ impl<Api: ChainApi> RevalidationWorker<Api> {
 		}
 	}
 
+	fn remove(&mut self, transactions: Vec<ExHash<Api>>) {
+		for ext_hash in transactions {
+			if let Some(block_number) = self.members.remove(&ext_hash) {
+				if let Some(block_record) = self.block_ordered.get_mut(&block_number) {
+					block_record.remove(&ext_hash);
+				}
+			}
+		}
+	}
+
+	fn len(&self) -> usize {
+		self.block_ordered.iter().map(|b| b.1.len()).sum()
+	}
+
 	/// Background worker main loop.
 	///
 	/// It does two things: periodically tries to process some transactions
 	/// from the queue and also accepts messages to enqueue some more
 	/// transactions from the pool.
-	pub async fn run(mut self, from_queue: mpsc::UnboundedReceiver<WorkerPayload<Api>>) {
+	pub async fn run(mut self, from_queue: mpsc::UnboundedReceiver<WorkerNotify<Api>>) {
 		let interval = interval(BACKGROUND_REVALIDATION_INTERVAL).fuse();
 		let from_queue = from_queue.fuse();
 		futures::pin_mut!(interval, from_queue);
@@ -198,13 +226,29 @@ impl<Api: ChainApi> RevalidationWorker<Api> {
 			futures::select! {
 				_ = interval.next() => {
 					let next_batch = this.prepare_batch();
+					let batch_len = next_batch.len();
 					batch_revalidate(this.pool.clone(), this.api.clone(), this.best_block, next_batch).await;
+					if batch_len > 0 || this.len() > 0 {
+						log::debug!(
+							target: "txpool",
+							"Revalidated {} transactions. Left in the queue for revalidation: {}.",
+							batch_len,
+							this.len(),
+						);
+					}
 				},
-				workload = from_queue.next() => {
-					match workload {
-						Some(worker_payload) => {
-							this.best_block = worker_payload.at;
-							this.push(worker_payload);
+				notification = from_queue.next() => {
+					match notification {
+						Some(notification) => {
+							match notification {
+								WorkerNotify::Add { transactions, at } => {
+									this.best_block = at;
+									this.push(at, transactions);
+								},
+								WorkerNotify::Remove { transactions } => {
+									this.remove(transactions);
+								},
+							}
 							continue;
 						},
 						// R.I.P. worker!
@@ -224,7 +268,7 @@ impl<Api: ChainApi> RevalidationWorker<Api> {
 pub struct RevalidationQueue<Api: ChainApi> {
 	pool: Arc<Pool<Api>>,
 	api: Arc<Api>,
-	background: Option<mpsc::UnboundedSender<WorkerPayload<Api>>>,
+	background: Option<mpsc::UnboundedSender<WorkerNotify<Api>>>,
 }
 
 impl<Api: ChainApi> RevalidationQueue<Api>
@@ -264,8 +308,11 @@ where
 	/// If queue configured without background worker, this will resolve after
 	/// revalidation is actually done.
 	pub async fn revalidate_later(&self, at: NumberFor<Api>, transactions: Vec<ExHash<Api>>) {
+		if transactions.len() > 0 {
+			log::debug!(target: "txpool", "Added {} transactions to revalidation queue", transactions.len());
+		}
 		if let Some(ref to_worker) = self.background {
-			if let Err(e) = to_worker.unbounded_send(WorkerPayload { at, transactions }) {
+			if let Err(e) = to_worker.unbounded_send(WorkerNotify::Add { at, transactions }) {
 				log::warn!(target: "txpool", "Failed to update background worker: {:?}", e);
 			}
 			return;
@@ -273,6 +320,19 @@ where
 			let pool = self.pool.clone();
 			let api = self.api.clone();
 			batch_revalidate(pool, api, at, transactions).await
+		}
+	}
+
+	/// Notify that some transactinos are no longer required to be revalidated.
+	pub fn notify_pruned(&self, transactions: Vec<ExHash<Api>>) {
+		if transactions.len() > 0 {
+			log::debug!(target: "txpool", "Removing {} transactions from revalidation queue", transactions.len());
+		}
+
+		if let Some(ref to_worker) = self.background {
+			if let Err(e) = to_worker.unbounded_send(WorkerNotify::Remove { transactions }) {
+				log::warn!(target: "txpool", "Failed to update background worker: {:?}", e);
+			}
 		}
 	}
 }

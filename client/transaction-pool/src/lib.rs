@@ -18,6 +18,7 @@
 
 #![warn(missing_docs)]
 #![warn(unused_extern_crates)]
+#![recursion_limit="256"]
 
 mod api;
 pub mod error;
@@ -345,6 +346,8 @@ impl<PoolApi, Block> MaintainedTransactionPool for BasicPool<PoolApi, Block>
 						if let Err(e) = pool.prune_known(&id, &hashes) {
 							log::error!("Cannot prune known in the pool {:?}!", e);
 						}
+
+						revalidation_queue.notify_pruned(hashes);
 					}
 
 					if next_action.resubmit {
